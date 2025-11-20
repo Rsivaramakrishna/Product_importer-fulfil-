@@ -1,46 +1,69 @@
-# Product Importer (FastAPI + Celery + Postgres)
+# Product Importer (FastAPI + Celery + PostgreSQL)
 
-## Quick Start
+A simple web application that allows users to:
 
-1. Create and start Postgres and Redis (for example using Docker):
+- Upload a large CSV file (up to 500,000 products)
+- Track real-time upload & import progress
+- View, filter, create, edit, delete products
+- Bulk delete all products
+- Manage webhooks and test them
+- All operations are done through a simple HTML/JS UI
+
+---
+
+## 🚀 Tech Stack
+
+- **FastAPI** – backend web framework  
+- **Celery** – background worker for long tasks (CSV import, webhook tests)  
+- **Redis** – Celery broker  
+- **PostgreSQL** – main database  
+- **SQLAlchemy** – ORM  
+- **HTML + JavaScript** – simple UI  
+- **Uvicorn** – server  
+
+---
+
+## 📁 Features Overview
+
+### ✅ CSV Upload (up to 500k rows)
+- Upload CSV file through UI
+- Import happens in background using Celery
+- Real-time progress (status, percentage, processed rows)
+- Overwrites duplicate products based on **case-insensitive SKU**
+
+### ✅ Product Management UI
+- View products (paginated)
+- Filter by SKU, name, description, active status
+- Add product
+- Edit product
+- Delete product
+
+### ✅ Bulk Delete
+- Delete all products from DB
+- Confirmation popup to avoid accidental delete
+
+### ✅ Webhooks
+- Add / edit / delete webhook URLs
+- Supported event: `product.import.completed`
+- Test webhook and see last response time & HTTP code
+
+---
+
+## 🛠️ Requirements
+
+Install these before running the project:
+
+- Python 3.9+
+- PostgreSQL
+- Redis
+- pip
+
+---
+
+## 🔧 Installation & Setup
+
+### 1. Clone the repo
 
 ```bash
-docker run --name postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=products_db -p 5432:5432 -d postgres
-docker run --name redis -p 6379:6379 -d redis
-```
-
-2. Install dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
-3. Set env variables (or use a `.env` file):
-
-```bash
-export DATABASE_URL=postgresql://postgres:postgres@localhost:5432/products_db
-export REDIS_URL=redis://localhost:6379/0
-```
-
-4. Start the API:
-
-```bash
-uvicorn app.main:app --reload
-```
-
-5. Start Celery worker (in another terminal):
-
-```bash
-celery -A app.celery_app.celery_app worker --loglevel=info
-```
-
-6. Open the UI in your browser:
-
-```
-http://localhost:8000/
-```
-
-- Use **Import** tab to upload a CSV with columns: `sku,name,description,price`.
-- Use **Products** tab to view/filter/edit products.
-- Use **Bulk Delete** tab to delete all products.
-- Use **Webhooks** tab to configure webhooks.
+git clone <your-repo-url>
+cd product_importer
