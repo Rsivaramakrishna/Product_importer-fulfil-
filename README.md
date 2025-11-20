@@ -2,7 +2,7 @@
 
 A simple web application that allows users to:
 
-- Upload a large CSV file (up to 500,000 products)
+- Upload a large CSV file up to 500,000 products
 - Track real-time upload & import progress
 - View, filter, create, edit, delete products
 - Bulk delete all products
