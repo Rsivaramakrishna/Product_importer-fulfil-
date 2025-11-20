@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Product Importer</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    nav a { margin-right: 10px; cursor: pointer; text-decoration: underline; color: #0366d6; }
+    .tab { display: none; margin-top: 20px; }
+    .tab.active { display: block; }
+    .progress-bar-container { width: 100%; background: #eee; border-radius: 4px; overflow: hidden; }
+    .progress-bar { height: 18px; width: 0%; background: #4caf50; transition: width 0.3s; }
+    table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 6px; font-size: 14px; }
+    th { background: #f5f5f5; }
+    .danger { color: red; }
+    .btn { padding: 4px 8px; font-size: 13px; cursor: pointer; margin-right: 4px; }
+  </style>
+</head>
+<body>
+  <h1>Product Importer</h1>
+  <nav>
+    <a onclick="showTab('import-tab')">Import</a>
+    <a onclick="showTab('products-tab')">Products</a>
+    <a onclick="showTab('bulk-tab')">Bulk Delete</a>
+    <a onclick="showTab('webhooks-tab')">Webhooks</a>
+  </nav>
+
+  <!-- IMPORT TAB -->
+  <div id="import-tab" class="tab active">
+    <h2>Upload CSV</h2>
+    <input type="file" id="csvFile" />
+    <button onclick="startUpload()" class="btn">Upload</button>
+
+    <div id="uploadStatus" style="margin-top:8px;"></div>
+    <div class="progress-bar-container" style="margin-top:10px;">
+      <div id="progressBar" class="progress-bar"></div>
+    </div>
+  </div>
+
+  <!-- PRODUCTS TAB -->
+  <div id="products-tab" class="tab">
+    <h2>Products</h2>
+    <div>
+      SKU: <input id="filterSku" />
+      Name: <input id="filterName" />
+      Desc: <input id="filterDesc" />
+      Active:
+      <select id="filterActive">
+        <option value="">Any</option>
+        <option value="true">Active</option>
+        <option value="false">Inactive</option>
+      </select>
+      <button onclick="loadProducts(1)" class="btn">Filter</button>
+    </div>
+
+    <button onclick="showCreateProduct()" class="btn" style="margin-top:8px;">Add Product</button>
+
+    <div id="productsTable"></div>
+    <div id="pagination" style="margin-top:8px;"></div>
+
+    <div id="productForm" style="margin-top:20px; border:1px solid #ccc; padding:10px; display:none;">
+      <h3 id="productFormTitle">New Product</h3>
+      <input type="hidden" id="productId" />
+      <div>SKU: <input id="productSku" /></div>
+      <div>Name: <input id="productName" /></div>
+      <div>Description: <input id="productDesc" /></div>
+      <div>Price: <input id="productPrice" type="number" step="0.01" /></div>
+      <div>
+        Active:
+        <select id="productActive">
+          <option value="true">Active</option>
+          <option value="false">Inactive</option>
+        </select>
+      </div>
+      <button onclick="saveProduct()" class="btn">Save</button>
+      <button onclick="hideProductForm()" class="btn">Cancel</button>
+      <div id="productFormError" class="danger" style="margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <!-- BULK DELETE TAB -->
+  <div id="bulk-tab" class="tab">
+    <h2>Bulk Delete Products</h2>
+    <p class="danger"><strong>Warning:</strong> This will delete ALL products.</p>
+    <button onclick="bulkDelete()" class="btn danger">Delete All Products</button>
+    <div id="bulkStatus" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- WEBHOOKS TAB -->
+  <div id="webhooks-tab" class="tab">
+    <h2>Webhooks</h2>
+    <button onclick="showWebhookForm()" class="btn">Add Webhook</button>
+    <div id="webhooksTable" style="margin-top:8px;"></div>
+
+    <div id="webhookForm" style="margin-top:20px; border:1px solid #ccc; padding:10px; display:none;">
+      <h3 id="webhookFormTitle">New Webhook</h3>
+      <input type="hidden" id="webhookId" />
+      <div>URL: <input id="webhookUrl" style="width:300px;" /></div>
+      <div>Event:
+        <select id="webhookEvent">
+          <option value="product.import.completed">product.import.completed</option>
+        </select>
+      </div>
+      <div>Enabled:
+        <select id="webhookEnabled">
+          <option value="true">Yes</option>
+          <option value="false">No</option>
+        </select>
+      </div>
+      <button onclick="saveWebhook()" class="btn">Save</button>
+      <button onclick="hideWebhookForm()" class="btn">Cancel</button>
+      <div id="webhookFormError" class="danger" style="margin-top:8px;"></div>
+    </div>
+  </div>
+
+<script>
+  function showTab(id) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+
+  // highlight active nav item
+  const navItems = document.querySelectorAll('nav a');
+  navItems.forEach(a => a.classList.remove('active-tab'));
+  // match by tab id name
+  navItems.forEach(a => {
+    if (a.getAttribute('onclick')?.includes(id)) {
+      a.classList.add('active-tab');
+    }
+  });
+}
+
+
+  // --------- IMPORT ----------
+  let currentJobId = null;
+  let pollInterval = null;
+
+  function startUpload() {
+    const fileInput = document.getElementById('csvFile');
+    const file = fileInput.files[0];
+    if (!file) {
+      alert("Please choose a file");
+      return;
+    }
+    const formData = new FormData();
+    formData.append('file', file);
+
+    document.getElementById('uploadStatus').innerText = "Uploading...";
+    document.getElementById('progressBar').style.width = "0%";
+
+    fetch('/api/imports/', {
+      method: 'POST',
+      body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+      currentJobId = data.id;
+      document.getElementById('uploadStatus').innerText = "Import queued. Job ID: " + data.id;
+      pollImport();
+    })
+    .catch(err => {
+      document.getElementById('uploadStatus').innerText = "Error: " + err;
+    });
+  }
+
+  function pollImport() {
+    if (!currentJobId) return;
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(() => {
+      fetch('/api/imports/' + currentJobId)
+        .then(r => r.json())
+        .then(job => {
+          let text = "Status: " + job.status;
+          if (job.total_rows) {
+            text += " | " + job.processed_rows + " / " + job.total_rows;
+            const percent = (job.processed_rows / job.total_rows) * 100;
+            document.getElementById('progressBar').style.width = percent + "%";
+          }
+          if (job.error_message) {
+            text += " | Error: " + job.error_message;
+          }
+          document.getElementById('uploadStatus').innerText = text;
+          if (job.status === "completed" || job.status === "failed") {
+            clearInterval(pollInterval);
+          }
+        })
+        .catch(() => {});
+    }, 1000);
+  }
+
+  // --------- PRODUCTS ----------
+  let currentPage = 1;
+
+  function loadProducts(page) {
+    currentPage = page;
+    const sku = document.getElementById('filterSku').value;
+    const name = document.getElementById('filterName').value;
+    const desc = document.getElementById('filterDesc').value;
+    const activeVal = document.getElementById('filterActive').value;
+
+    let url = `/api/products?page=${page}&page_size=10`;
+    if (sku) url += `&sku=${encodeURIComponent(sku)}`;
+    if (name) url += `&name=${encodeURIComponent(name)}`;
+    if (desc) url += `&description=${encodeURIComponent(desc)}`;
+    if (activeVal) url += `&active=${activeVal}`;
+
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        renderProductsTable(data);
+      });
+  }
+
+  function renderProductsTable(data) {
+    const container = document.getElementById('productsTable');
+    if (!data.items || data.items.length === 0) {
+      container.innerHTML = "<p>No products</p>";
+      document.getElementById('pagination').innerHTML = "";
+      return;
+    }
+    let html = "<table><tr><th>ID</th><th>SKU</th><th>Name</th><th>Price</th><th>Active</th><th>Actions</th></tr>";
+    data.items.forEach(p => {
+      html += `<tr>
+        <td>${p.id}</td>
+        <td>${p.sku}</td>
+        <td>${p.name || ""}</td>
+        <td>${p.price || ""}</td>
+        <td>${p.active ? "Yes" : "No"}</td>
+        <td>
+          <button class="btn" onclick="editProduct(${p.id})">Edit</button>
+          <button class="btn danger" onclick="deleteProduct(${p.id})">Delete</button>
+        </td>
+      </tr>`;
+    });
+    html += "</table>";
+    container.innerHTML = html;
+
+    const totalPages = Math.ceil(data.total / data.page_size);
+    let pagHtml = "";
+    if (data.page > 1) {
+      pagHtml += `<button class="btn" onclick="loadProducts(${data.page - 1})">Prev</button>`;
+    }
+    pagHtml += ` Page ${data.page} of ${totalPages} `;
+    if (data.page < totalPages) {
+      pagHtml += `<button class="btn" onclick="loadProducts(${data.page + 1})">Next</button>`;
+    }
+    document.getElementById('pagination').innerHTML = pagHtml;
+  }
+
+  function showCreateProduct() {
+    document.getElementById('productFormTitle').innerText = "New Product";
+    document.getElementById('productId').value = "";
+    document.getElementById('productSku').value = "";
+    document.getElementById('productName').value = "";
+    document.getElementById('productDesc').value = "";
+    document.getElementById('productPrice').value = "";
+    document.getElementById('productActive').value = "true";
+    document.getElementById('productFormError').innerText = "";
+    document.getElementById('productForm').style.display = "block";
+  }
+
+  function hideProductForm() {
+    document.getElementById('productForm').style.display = "none";
+  }
+
+  function editProduct(id) {
+    fetch('/api/products/' + id)
+      .then(r => r.json())
+      .then(p => {
+        document.getElementById('productFormTitle').innerText = "Edit Product";
+        document.getElementById('productId').value = p.id;
+        document.getElementById('productSku').value = p.sku;
+        document.getElementById('productName').value = p.name || "";
+        document.getElementById('productDesc').value = p.description || "";
+        document.getElementById('productPrice').value = p.price || "";
+        document.getElementById('productActive').value = p.active ? "true" : "false";
+        document.getElementById('productFormError').innerText = "";
+        document.getElementById('productForm').style.display = "block";
+      });
+  }
+
+  function saveProduct() {
+    const id = document.getElementById('productId').value;
+    const payload = {
+      sku: document.getElementById('productSku').value,
+      name: document.getElementById('productName').value,
+      description: document.getElementById('productDesc').value,
+      price: document.getElementById('productPrice').value,
+      active: document.getElementById('productActive').value === "true"
+    };
+
+    const isNew = !id;
+    const url = isNew ? '/api/products' : '/api/products/' + id;
+    const method = isNew ? 'POST' : 'PUT';
+
+    fetch(url, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(async r => {
+      if (!r.ok) {
+        const data = await r.json();
+        throw new Error(data.detail || "Error");
+      }
+      return r.json();
+    })
+    .then(() => {
+      hideProductForm();
+      loadProducts(currentPage);
+    })
+    .catch(err => {
+      document.getElementById('productFormError').innerText = err.message;
+    });
+  }
+
+  function deleteProduct(id) {
+    if (!confirm("Delete this product?")) return;
+    fetch('/api/products/' + id, { method: 'DELETE' })
+      .then(() => loadProducts(currentPage));
+  }
+
+  // --------- BULK DELETE ----------
+  function bulkDelete() {
+    if (!confirm("Are you sure? This cannot be undone.")) return;
+    document.getElementById('bulkStatus').innerText = "Deleting...";
+    fetch('/api/products', { method: 'DELETE' })
+      .then(r => r.json())
+      .then(data => {
+        document.getElementById('bulkStatus').innerText =
+          "Deleted " + data.deleted_count + " products.";
+      })
+      .catch(err => {
+        document.getElementById('bulkStatus').innerText = "Error: " + err;
+      });
+  }
+
+  // --------- WEBHOOKS ----------
+  function loadWebhooks() {
+    fetch('/api/webhooks')
+      .then(r => r.json())
+      .then(data => {
+        const container = document.getElementById('webhooksTable');
+        if (!data.length) {
+          container.innerHTML = "<p>No webhooks</p>";
+          return;
+        }
+        let html = "<table><tr><th>ID</th><th>URL</th><th>Event</th><th>Enabled</th><th>Last Code</th><th>Last Time (ms)</th><th>Actions</th></tr>";
+        data.forEach(w => {
+          html += `<tr>
+            <td>${w.id}</td>
+            <td>${w.url}</td>
+            <td>${w.event_type}</td>
+            <td>${w.enabled ? "Yes" : "No"}</td>
+            <td>${w.last_response_code || ""}</td>
+            <td>${w.last_response_time_ms || ""}</td>
+            <td>
+              <button class="btn" onclick="editWebhook(${w.id})">Edit</button>
+              <button class="btn danger" onclick="deleteWebhook(${w.id})">Delete</button>
+              <button class="btn" onclick="testWebhook(${w.id})">Test</button>
+            </td>
+          </tr>`;
+        });
+        html += "</table>";
+        container.innerHTML = html;
+      });
+  }
+
+  function showWebhookForm() {
+    document.getElementById('webhookFormTitle').innerText = "New Webhook";
+    document.getElementById('webhookId').value = "";
+    document.getElementById('webhookUrl').value = "";
+    document.getElementById('webhookEvent').value = "product.import.completed";
+    document.getElementById('webhookEnabled').value = "true";
+    document.getElementById('webhookFormError').innerText = "";
+    document.getElementById('webhookForm').style.display = "block";
+  }
+
+  function hideWebhookForm() {
+    document.getElementById('webhookForm').style.display = "none";
+  }
+
+  function editWebhook(id) {
+    fetch('/api/webhooks')
+      .then(r => r.json())
+      .then(list => {
+        const w = list.find(x => x.id === id);
+        if (!w) return;
+        document.getElementById('webhookFormTitle').innerText = "Edit Webhook";
+        document.getElementById('webhookId').value = w.id;
+        document.getElementById('webhookUrl').value = w.url;
+        document.getElementById('webhookEvent').value = w.event_type;
+        document.getElementById('webhookEnabled').value = w.enabled ? "true" : "false";
+        document.getElementById('webhookFormError').innerText = "";
+        document.getElementById('webhookForm').style.display = "block";
+      });
+  }
+
+  function saveWebhook() {
+    const id = document.getElementById('webhookId').value;
+    const payload = {
+      url: document.getElementById('webhookUrl').value,
+      event_type: document.getElementById('webhookEvent').value,
+      enabled: document.getElementById('webhookEnabled').value === "true"
+    };
+    const isNew = !id;
+    const url = isNew ? '/api/webhooks' : '/api/webhooks/' + id;
+    const method = isNew ? 'POST' : 'PUT';
+
+    fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    .then(async r => {
+      if (!r.ok) {
+        const d = await r.json();
+        throw new Error(d.detail || "Error");
+      }
+      return r.json();
+    })
+    .then(() => {
+      hideWebhookForm();
+      loadWebhooks();
+    })
+    .catch(err => {
+      document.getElementById('webhookFormError').innerText = err.message;
+    });
+  }
+
+  function deleteWebhook(id) {
+    if (!confirm("Delete webhook?")) return;
+    fetch('/api/webhooks/' + id, { method: 'DELETE' })
+      .then(() => loadWebhooks());
+  }
+
+  function testWebhook(id) {
+    fetch('/api/webhooks/' + id + '/test', { method: 'POST' })
+      .then(() => {
+        setTimeout(loadWebhooks, 2000); // wait then refresh result
+      });
+  }
+
+  // Initial load
+  loadProducts(1);
+  loadWebhooks();
+</script>
+</body>
+</html>
+<style>
+  :root {
+    --bg: #0f172a;
+    --bg-elevated: #020617;
+    --card: #020617;
+    --card-soft: #020617;
+    --accent: #3b82f6;
+    --accent-soft: rgba(59, 130, 246, 0.15);
+    --accent-strong: #2563eb;
+    --danger: #ef4444;
+    --border-subtle: rgba(148, 163, 184, 0.3);
+    --text: #e5e7eb;
+    --muted: #9ca3af;
+    --radius-xl: 16px;
+    --radius-lg: 12px;
+    --shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.8);
+    --transition-fast: 150ms ease-out;
+    --transition-med: 220ms ease;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    margin: 0;
+    padding: 24px;
+    background: radial-gradient(circle at top, #1e293b 0, #020617 42%, #000 100%);
+    color: var(--text);
+  }
+
+  h1 {
+    margin: 0 0 18px;
+    font-size: 26px;
+    letter-spacing: 0.03em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  h1::before {
+    content: "⬢";
+    font-size: 14px;
+    color: var(--accent);
+    filter: drop-shadow(0 0 6px rgba(59, 130, 246, 0.8));
+  }
+
+  h2 {
+    margin-top: 0;
+    font-size: 20px;
+    letter-spacing: 0.02em;
+  }
+
+  nav {
+    display: flex;
+    gap: 8px;
+    padding: 6px;
+    background: rgba(15, 23, 42, 0.9);
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    box-shadow: 0 12px 40px rgba(15, 23, 42, 0.9);
+    width: fit-content;
+    margin-bottom: 20px;
+  }
+
+  nav a {
+    position: relative;
+    padding: 6px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    color: var(--muted);
+    text-decoration: none;
+    border-radius: 999px;
+    transition: background-color var(--transition-fast), color var(--transition-fast), transform var(--transition-fast);
+  }
+
+  nav a::after {
+    content: "";
+    position: absolute;
+    inset: 3px;
+    border-radius: inherit;
+    border: 1px solid transparent;
+    transition: border-color var(--transition-fast);
+  }
+
+  nav a:hover {
+    color: var(--text);
+    background: rgba(148, 163, 184, 0.15);
+    transform: translateY(-1px);
+  }
+
+  nav a.active-tab {
+    color: #f9fafb;
+    background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+    box-shadow: 0 12px 30px rgba(37, 99, 235, 0.55);
+  }
+
+  nav a.active-tab::after {
+    border-color: rgba(248, 250, 252, 0.6);
+  }
+
+  .tab {
+    display: none;
+    margin-top: 14px;
+    padding: 18px 18px 22px;
+    border-radius: var(--radius-xl);
+    background: radial-gradient(circle at top left, rgba(59, 130, 246, 0.18) 0, transparent 55%),
+                radial-gradient(circle at bottom right, rgba(239, 68, 68, 0.12) 0, transparent 60%),
+                var(--card);
+    border: 1px solid rgba(148, 163, 184, 0.3);
+    box-shadow: var(--shadow-soft);
+    backdrop-filter: blur(16px);
+    animation: fadeInUp 260ms ease-out;
+  }
+
+  .tab.active {
+    display: block;
+  }
+
+  @keyframes fadeInUp {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  input[type="text"],
+  input[type="number"],
+  input[type="file"],
+  select {
+    background: rgba(15, 23, 42, 0.9);
+    border-radius: 999px;
+    border: 1px solid var(--border-subtle);
+    padding: 6px 10px;
+    font-size: 13px;
+    color: var(--text);
+    outline: none;
+    min-width: 0;
+    transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+  }
+
+  input[type="file"] {
+    border-radius: 40px;
+    padding: 8px 10px;
+  }
+
+  input:focus,
+  select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.8), 0 0 0 6px rgba(37, 99, 235, 0.25);
+    background: rgba(15, 23, 42, 0.95);
+  }
+
+  label {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .btn {
+    padding: 6px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 999px;
+    border: none;
+    background: radial-gradient(circle at top left, #4f46e5, #2563eb);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    letter-spacing: 0.02em;
+    box-shadow: 0 12px 30px rgba(37, 99, 235, 0.55);
+    transform: translateY(0);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast), filter var(--transition-fast), opacity var(--transition-fast);
+  }
+
+  .btn:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.05);
+    box-shadow: 0 18px 40px rgba(37, 99, 235, 0.65);
+  }
+
+  .btn:active {
+    transform: translateY(0);
+    box-shadow: 0 6px 18px rgba(37, 99, 235, 0.6);
+  }
+
+  .btn.danger {
+    background: radial-gradient(circle at top left, #f97316, #ef4444);
+    box-shadow: 0 12px 30px rgba(239, 68, 68, 0.6);
+  }
+
+  .btn.danger:hover {
+    box-shadow: 0 18px 40px rgba(239, 68, 68, 0.7);
+  }
+
+  .btn-secondary {
+    background: rgba(15, 23, 42, 0.9);
+    color: var(--text);
+    border: 1px solid rgba(148, 163, 184, 0.6);
+    box-shadow: 0 8px 20px rgba(15, 23, 42, 0.7);
+  }
+
+  .btn-secondary:hover {
+    background: rgba(15, 23, 42, 1);
+  }
+
+  .progress-bar-container {
+    width: 100%;
+    background: rgba(15, 23, 42, 0.9);
+    border-radius: 999px;
+    overflow: hidden;
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    margin-top: 8px;
+  }
+
+  .progress-bar {
+    height: 18px;
+    width: 0%;
+    background: linear-gradient(90deg, #22c55e, #84cc16, #22c55e);
+    background-size: 200% 100%;
+    animation: progressPulse 1.2s linear infinite;
+    transition: width 240ms ease-out;
+  }
+
+  @keyframes progressPulse {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
+  }
+
+  #uploadStatus,
+  #bulkStatus,
+  #productFormError,
+  #webhookFormError {
+    font-size: 13px;
+  }
+
+  #uploadStatus {
+    color: var(--muted);
+  }
+
+  .danger {
+    color: var(--danger);
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-top: 10px;
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: rgba(15, 23, 42, 0.95);
+    box-shadow: 0 12px 35px rgba(15, 23, 42, 0.9);
+  }
+
+  th,
+  td {
+    border-bottom: 1px solid rgba(30, 41, 59, 0.9);
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  th {
+    background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 64, 175, 0.4));
+    text-align: left;
+    color: #e5e7eb;
+  }
+
+  tr:nth-child(even) td {
+    background: rgba(15, 23, 42, 0.98);
+  }
+
+  tr:hover td {
+    background: rgba(30, 64, 175, 0.3);
+  }
+
+  #pagination {
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  #productForm,
+  #webhookForm {
+    background: rgba(15, 23, 42, 0.96);
+    border-radius: var(--radius-lg);
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    box-shadow: 0 14px 38px rgba(15, 23, 42, 0.95);
+  }
+
+  #productForm h3,
+  #webhookForm h3 {
+    margin-top: 0;
+    margin-bottom: 10px;
+  }
+</style>
+
